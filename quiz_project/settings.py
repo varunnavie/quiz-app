@@ -122,6 +122,26 @@ CORS_ALLOW_ALL_ORIGINS = True
 # Groq AI
 GROQ_API_KEY = os.getenv('GROQ_API_KEY')
 
+# Cache — uses Redis in production, in-memory locally
+REDIS_URL = os.getenv('REDIS_URL')
+if REDIS_URL:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django_redis.cache.RedisCache',
+            'LOCATION': REDIS_URL,
+            'OPTIONS': {'CLIENT_CLASS': 'django_redis.client.DefaultClient'},
+        }
+    }
+else:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        }
+    }
+
+CACHE_TTL_LEADERBOARD = 60 * 5   # 5 minutes
+CACHE_TTL_QUIZ_LIST = 60 * 2     # 2 minutes
+
 # Swagger / drf-spectacular
 SPECTACULAR_SETTINGS = {
     'TITLE': 'QuizMaster AI API',

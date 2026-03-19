@@ -1,5 +1,7 @@
 from django.utils import timezone
 from django.db import transaction
+from django.core.cache import cache
+from django.conf import settings
 from rest_framework import generics, permissions, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -23,18 +25,24 @@ class AIGenerationThrottle(UserRateThrottle):
 
 @extend_schema(tags=['Quizzes'])
 class QuizListView(generics.ListAPIView):
-    """Browse all public quizzes."""
+    """Browse all public quizzes. Results cached for 2 minutes."""
     serializer_class = QuizListSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
+        topic = self.request.query_params.get('topic', '')
+        difficulty = self.request.query_params.get('difficulty', '')
+        cache_key = f'quiz_list_{topic}_{difficulty}'
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
         qs = Quiz.objects.filter(status='ready', is_public=True)
-        topic = self.request.query_params.get('topic')
-        difficulty = self.request.query_params.get('difficulty')
         if topic:
             qs = qs.filter(topic__icontains=topic)
         if difficulty:
             qs = qs.filter(difficulty=difficulty)
+        qs = list(qs)
+        cache.set(cache_key, qs, settings.CACHE_TTL_QUIZ_LIST)
         return qs
 
 
@@ -85,6 +93,8 @@ class QuizCreateView(generics.CreateAPIView):
                         )
                 quiz.status = 'ready'
                 quiz.save()
+                # Invalidate quiz list cache so new quiz appears immediately
+                cache.delete_pattern('quiz_list_*') if hasattr(cache, 'delete_pattern') else cache.clear()
         except Exception as e:
             quiz.status = 'failed'
             quiz.save()
@@ -304,11 +314,19 @@ class MyStatsView(APIView):
 
 @extend_schema(tags=['Analytics'])
 class LeaderboardView(generics.ListAPIView):
-    """Top users ranked by average score (minimum 3 quizzes taken)."""
+    """Top users ranked by average score (minimum 3 quizzes taken). Cached for 5 minutes."""
     serializer_class = LeaderboardSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return UserStats.objects.filter(
-            total_quizzes_taken__gte=3
-        ).select_related('user').order_by('-average_score', '-best_streak')[:20]
+        cache_key = 'leaderboard_top20'
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+        qs = list(
+            UserStats.objects.filter(
+                total_quizzes_taken__gte=3
+            ).select_related('user').order_by('-average_score', '-best_streak')[:20]
+        )
+        cache.set(cache_key, qs, settings.CACHE_TTL_LEADERBOARD)
+        return qs
