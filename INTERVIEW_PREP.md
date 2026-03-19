@@ -181,7 +181,67 @@ Read this multiple times. The goal is not to memorize — it's to understand.
 
 ---
 
-## SECTION 8: Deployment Questions
+## SECTION 8: Caching Questions
+
+### Q: What caching did you implement?
+**A:**
+"I cache two endpoints. The public quiz list is cached for 2 minutes per filter combination — the cache key includes the topic and difficulty filters so different searches get their own cache entries. The leaderboard is cached for 5 minutes since it doesn't need to be real-time. When a new quiz is successfully created, I immediately invalidate the quiz list cache so the new quiz appears right away without waiting for the TTL to expire. Locally this uses Django's built-in in-memory cache. In production with Redis, it would use django-redis — just a change of one environment variable."
+
+---
+
+### Q: Why 2 minutes for quiz list and 5 minutes for leaderboard?
+**A:**
+"The quiz list updates when someone creates a new quiz — which triggers cache invalidation anyway. So the 2-minute TTL is a safety net. The leaderboard is based on aggregated stats which update after each attempt — a 5-minute lag is acceptable for a leaderboard. These TTLs are intentionally short for a project this size but demonstrate the caching pattern. In production with heavy traffic, I'd increase them or use cache invalidation signals for more precision."
+
+---
+
+### Q: What is cache invalidation and why is it hard?
+**A:**
+"Cache invalidation is the process of removing or updating cached data when the underlying data changes. It's called one of the hardest problems in computer science because you have to decide: when exactly does the cache become stale? In my case, when a new quiz is created I call `cache.clear()` (or `cache.delete_pattern()` with Redis) to remove the quiz list cache. If I didn't do this, a user who just created a quiz wouldn't see it in the list for up to 2 minutes — bad user experience."
+
+---
+
+## SECTION 9: Testing Questions
+
+### Q: What tests did you write?
+**A:**
+"33 tests total across two files. In `users/tests.py` I have 13 tests covering registration — valid input, duplicate email, password mismatch, weak password — login with correct and incorrect credentials, and profile access. In `quiz/tests.py` I have 20 tests: model tests for the `percentage` property, `passed` logic, and `attempt_count`; stats tests for streak increase, streak reset, best_streak never decreasing, and average score calculation; API tests for quiz listing, filtering, auth requirements; and attempt flow tests covering starting, duplicate prevention, correct/wrong scoring, resubmission prevention, invalid question IDs, abandoning, history, and stats updates."
+
+---
+
+### Q: Why didn't you mock the AI in tests?
+**A:**
+"Tests should be fast and deterministic. AI calls are slow and non-deterministic — the AI might return slightly different questions each time. So for tests, I create quizzes and questions directly via the model layer, bypassing `ai_service.py` entirely. This tests the business logic (scoring, streaks, attempts) without depending on an external service. The AI integration is tested manually by running the actual API. This is the right separation — unit tests for logic, manual testing for external integrations."
+
+---
+
+### Q: Why do you call `cache.clear()` in `setUp()`?
+**A:**
+"Django's in-memory cache (`LocMemCache`) persists between test cases within the same test run — it's not reset like the database is. If one test caches an empty quiz list, the next test might read that stale cache and get 0 results even though it just created quizzes. Calling `cache.clear()` in `setUp()` ensures every test starts with a clean cache state. I discovered this when `test_list_public_quizzes` was failing because `test_draft_quizzes_not_listed` ran first and cached an empty list."
+
+---
+
+### Q: What is the difference between unit tests and integration tests?
+**A:**
+"Unit tests test one piece of logic in isolation — like testing that `attempt.percentage` returns the right number. They don't need a server or network. Integration tests test multiple components working together — like testing that POSTing to `/api/v1/quizzes/<id>/start/` creates a QuizAttempt in the database. My tests are mostly integration tests using DRF's `APIClient`, which simulates HTTP requests without needing a running server."
+
+---
+
+## SECTION 10: API Versioning Questions
+
+### Q: How did you implement API versioning?
+**A:**
+"URL-based versioning — all endpoints are available at `/api/v1/auth/` and `/api/v1/quizzes/`. The original `/api/auth/` and `/api/quizzes/` paths are kept as legacy routes pointing to the same views. This means existing clients continue working if they were built against the unversioned URLs. If I needed to make a breaking change — like changing a response format — I'd create `v2` views and add `/api/v2/` routes while keeping v1 intact."
+
+---
+
+### Q: Why URL versioning over header versioning?
+**A:**
+"URL versioning (`/api/v1/`) is explicit and visible — you can see the version in the URL, in logs, in browser history. Header versioning (`Accept: application/vnd.api+json;version=1`) is cleaner but harder to test in a browser and easier to forget. For an API that might be shared with a frontend team or tested by non-technical people, URL versioning is more practical. It's also what most major public APIs (Stripe, Twilio) use."
+
+---
+
+## SECTION 11: Deployment Questions
 
 ### Q: How is your app deployed?
 **A:**
@@ -207,7 +267,7 @@ Read this multiple times. The goal is not to memorize — it's to understand.
 
 ---
 
-## SECTION 9: Live Modification Questions
+## SECTION 12: Live Modification Questions
 
 These are questions where the interviewer might ask you to change something on the spot.
 
@@ -238,7 +298,7 @@ Quiz.objects.filter(id=quiz_id).update(attempt_count=F('attempt_count') + 1)
 
 ---
 
-## SECTION 10: Trade-off Discussion Questions
+## SECTION 13: Trade-off Discussion Questions
 
 ### Q: What would you do differently if you had more time?
 **A:**

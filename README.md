@@ -4,6 +4,7 @@ A fully deployed REST API for an AI-powered quiz platform built with Django, Dja
 
 **Live API:** https://quiz-app-production-b4cd.up.railway.app/api/docs/
 **Admin Panel:** https://quiz-app-production-b4cd.up.railway.app/admin/
+**GitHub:** https://github.com/varunnavie/quiz-app
 
 ---
 
@@ -18,11 +19,14 @@ A fully deployed REST API for an AI-powered quiz platform built with Django, Dja
 7. [Authentication Deep Dive](#authentication-deep-dive)
 8. [AI Integration](#ai-integration)
 9. [Design Decisions and Trade-offs](#design-decisions-and-trade-offs)
-10. [Edge Cases Handled](#edge-cases-handled)
-11. [Security](#security)
-12. [Performance](#performance)
-13. [Local Setup](#local-setup)
-14. [Deployment](#deployment)
+10. [Challenges Faced and Solutions](#challenges-faced-and-solutions)
+11. [Edge Cases Handled](#edge-cases-handled)
+12. [Security](#security)
+13. [Performance and Caching](#performance-and-caching)
+14. [Testing Approach](#testing-approach)
+15. [Local Setup](#local-setup)
+16. [Deployment](#deployment)
+17. [Bonus Features](#bonus-features)
 
 ---
 
@@ -70,22 +74,22 @@ This is a pure backend project — it exposes JSON API endpoints that any fronte
 - No database lookup needed to verify the token — faster
 
 ### Groq (AI Provider)
-**What it is:** A free AI API service that gives access to powerful language models (Llama 3.3).
+**What it is:** A free AI API service that gives access to powerful language models (Llama 3.3 70B).
 
 **Why Groq instead of Gemini:**
-- We initially chose Google Gemini (free tier) but the API key returned `limit: 0` — meaning zero quota was assigned to our account. This can happen based on Google account type or region restrictions.
+- We initially chose Google Gemini (free tier) but the API returned `limit: 0` — zero quota assigned
 - Groq provides a genuinely free tier with no quota issues, fast response times, and high-quality models
-- The code architecture is identical — swapping AI providers only required changing ~5 lines in `ai_service.py`
+- The code architecture is swappable — changing AI providers only requires updating `ai_service.py`
 
 ### Jazzmin
-**What it is:** A theme for Django's built-in admin panel.
+**What it is:** A modern theme for Django's built-in admin panel.
 
-**Why we added it:** Django's default admin UI is functional but looks very outdated. Jazzmin replaces it with a modern, clean interface with icons and a sidebar — much better for demo purposes and the interview.
+**Why we added it:** Django's default admin UI is functional but outdated. Jazzmin replaces it with a modern interface with icons and a sidebar — making quiz and user management much easier to navigate.
 
 ### drf-spectacular (Swagger UI)
-**What it is:** Automatically generates interactive API documentation from your code.
+**What it is:** Auto-generates interactive API documentation from your code.
 
-**Why we added it:** Instead of writing API docs manually, drf-spectacular reads our views and serializers and auto-generates a beautiful Swagger UI. Interviewers can test every endpoint directly in the browser without needing Postman or curl.
+**Why we added it:** Instead of writing docs manually, drf-spectacular reads our views and serializers and generates a full Swagger UI — anyone can test every endpoint in the browser without Postman.
 
 ---
 
@@ -95,22 +99,24 @@ This is a pure backend project — it exposes JSON API endpoints that any fronte
 quiz_application/
 │
 ├── quiz_project/          ← Django configuration
-│   ├── settings.py        ← All project settings (database, installed apps, JWT config)
+│   ├── settings.py        ← All settings (database, cache, JWT, installed apps)
 │   ├── urls.py            ← Main URL router — maps URLs to apps
 │   └── wsgi.py            ← Entry point for production server (gunicorn)
 │
 ├── users/                 ← Everything related to users
-│   ├── models.py          ← Custom User model
-│   ├── serializers.py     ← Controls what user data looks like in API responses
+│   ├── models.py          ← Custom User model (email-based login)
+│   ├── serializers.py     ← Input validation and response shaping for users
 │   ├── views.py           ← Register and profile endpoints
-│   └── urls.py            ← User-specific URL patterns
+│   ├── urls.py            ← User-specific URL patterns
+│   └── tests.py           ← 13 tests covering auth and profile
 │
 ├── quiz/                  ← Everything related to quizzes
 │   ├── models.py          ← Quiz, Question, Choice, QuizAttempt, UserAnswer, UserStats
-│   ├── serializers.py     ← Controls what quiz data looks like in API responses
-│   ├── views.py           ← All quiz-related endpoint logic
+│   ├── serializers.py     ← Input validation and response shaping for quizzes
+│   ├── views.py           ← All quiz, attempt, and analytics endpoint logic
 │   ├── urls.py            ← Quiz-specific URL patterns
-│   └── ai_service.py      ← Groq API integration for question generation
+│   ├── ai_service.py      ← Groq API integration for AI question generation
+│   └── tests.py           ← 20 tests covering models, attempts, scoring, edge cases
 │
 ├── .env                   ← Secret keys and API keys (NOT committed to GitHub)
 ├── requirements.txt       ← All Python packages needed
@@ -118,74 +124,63 @@ quiz_application/
 └── nixpacks.toml          ← Tells Railway how to build the project
 ```
 
-**Why this structure?**
-We split the project into two apps — `users` and `quiz`. This is called "separation of concerns" — each app handles one area of responsibility. If we wanted to add a `billing` feature later, we'd create a third app. This makes the codebase easier to navigate and maintain.
+**Why two apps?**
+Separation of concerns — `users` handles identity, `quiz` handles everything else. Adding a new feature (e.g. billing) would mean a third app, not cluttering existing ones.
 
 ---
 
 ## Database Schema
 
-Here are all the database tables (called "models" in Django) and how they relate to each other:
-
-### User (in `users` app)
-Extends Django's built-in user model. We added `email` as the login field instead of username.
+### User
+Extends Django's built-in user model. Email is used as the login field.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| id | UUID | Primary key |
-| email | String (unique) | Used to log in |
+| id | Integer | Primary key |
+| email | String (unique) | Login identifier |
 | username | String | Display name |
 | password | String (hashed) | Never stored as plain text |
 | date_joined | DateTime | Auto-set on registration |
 
-**Why extend the built-in user?** Django gives us a User model for free with password hashing, permissions, etc. We just customized it to use email as the login identifier — more user-friendly than username.
-
 ### Quiz
-Represents a quiz that was created (with AI-generated questions).
 
 | Field | Type | Description |
 |-------|------|-------------|
 | id | Integer | Primary key |
-| title | String | e.g. "Python Basics" |
-| topic | String | What the AI generates questions about |
+| title | String | Quiz name |
+| topic | String | What AI generates questions about |
 | difficulty | Choice | easy / medium / hard |
-| question_count | Integer | 1–20 questions |
-| created_by | FK → User | Who created this quiz |
-| is_public | Boolean | Whether others can see/take it |
-| status | Choice | draft / ready / failed |
-| time_limit_minutes | Integer (optional) | Optional time limit |
+| question_count | Integer | 1–20 |
+| created_by | FK → User | Creator |
+| is_public | Boolean | Visible to all users? |
+| status | Choice | draft → ready → failed |
+| time_limit_minutes | Integer (optional) | Optional time cap |
 | created_at | DateTime | Auto-set |
 
-**The `status` field explains the AI generation lifecycle:**
-- `draft` → quiz was just created, AI generation hasn't finished
-- `ready` → AI generated questions successfully, quiz is available
-- `failed` → AI call failed (network error, bad response, etc.)
+**Status lifecycle:** `draft` (just created) → `ready` (AI succeeded) → `failed` (AI failed)
 
 ### Question
-One question belonging to a quiz.
 
 | Field | Type | Description |
 |-------|------|-------------|
 | id | Integer | Primary key |
-| quiz | FK → Quiz | Which quiz this belongs to |
-| text | String | The question text |
-| explanation | String | Shown after answering — why the answer is correct |
-| order | Integer | Question number (1, 2, 3...) |
+| quiz | FK → Quiz | Parent quiz |
+| text | String | Question text |
+| explanation | String | Why the answer is correct (shown after submission) |
+| order | Integer | Question number |
 
 ### Choice
-One answer option for a question (always 4 per question).
 
 | Field | Type | Description |
 |-------|------|-------------|
 | id | Integer | Primary key |
-| question | FK → Question | Which question this belongs to |
-| text | String | The answer option text |
-| is_correct | Boolean | Whether this is the correct answer |
+| question | FK → Question | Parent question |
+| text | String | Answer option text |
+| is_correct | Boolean | Is this the right answer? |
 
-**Important design note:** When a user is taking a quiz, we send choices WITHOUT the `is_correct` field — otherwise they'd see the answers! We only send `is_correct` in the results response after submission.
+**Note:** `is_correct` is hidden from quiz-taking responses. It's only included in results after submission.
 
 ### QuizAttempt
-Represents one user's attempt at a quiz.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -193,46 +188,38 @@ Represents one user's attempt at a quiz.
 | user | FK → User | Who is attempting |
 | quiz | FK → Quiz | Which quiz |
 | status | Choice | in_progress / completed / abandoned / timed_out |
-| score | Float | Percentage score (0–100) |
+| score | Float | Percentage 0–100 |
 | correct_answers | Integer | Count of correct answers |
-| total_questions | Integer | Total questions in quiz |
-| started_at | DateTime | When attempt began |
-| completed_at | DateTime | When attempt finished |
-| time_taken_seconds | Integer | How long it took |
+| total_questions | Integer | Total questions |
+| started_at | DateTime | Attempt start time |
+| completed_at | DateTime | Attempt end time |
+| time_taken_seconds | Integer | Duration |
 
 ### UserAnswer
-Records which choice a user picked for each question in an attempt.
 
 | Field | Type | Description |
 |-------|------|-------------|
 | id | Integer | Primary key |
-| attempt | FK → QuizAttempt | Which attempt this answer belongs to |
-| question | FK → Question | Which question was answered |
-| chosen_choice | FK → Choice | Which option the user picked |
-| is_correct | Boolean | Was it correct? (cached for performance) |
+| attempt | FK → QuizAttempt | Parent attempt |
+| question | FK → Question | Which question |
+| chosen_choice | FK → Choice | What the user picked |
+| is_correct | Boolean | Cached for performance |
 
-**Why store `is_correct` here when we can derive it from Choice?**
-Performance. When loading results, we don't want to do extra database joins. Storing it directly means one simple query.
-
-**The `unique_together` constraint on (attempt, question):**
-This prevents a user from submitting two answers for the same question in the same attempt — a data integrity rule enforced at the database level.
+**Constraint:** `unique_together('attempt', 'question')` — one answer per question per attempt, enforced at the database level.
 
 ### UserStats
-Aggregated performance stats for a user. One row per user.
+One row per user. Updated after every completed attempt.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| user | OneToOne → User | One stats record per user |
-| total_quizzes_taken | Integer | Lifetime quiz count |
-| total_correct_answers | Integer | Lifetime correct answers |
-| total_questions_answered | Integer | Lifetime questions answered |
-| current_streak | Integer | Consecutive quizzes passed (≥60%) |
-| best_streak | Integer | Highest streak ever achieved |
-| average_score | Float | Overall average percentage |
-| last_activity | DateTime | Last quiz completion time |
-
-**Why a separate stats table instead of calculating on the fly?**
-If we calculated stats by querying all attempts every time, it would be slow for users with hundreds of attempts. Instead, we update the stats row once when each attempt completes — this is called "pre-aggregation" and is much faster to read.
+| user | OneToOne → User | Owner |
+| total_quizzes_taken | Integer | Lifetime count |
+| total_correct_answers | Integer | Lifetime correct |
+| total_questions_answered | Integer | Lifetime answered |
+| current_streak | Integer | Consecutive passes (≥60%) |
+| best_streak | Integer | Highest streak ever |
+| average_score | Float | Overall average % |
+| last_activity | DateTime | Last completion time |
 
 ### Relationships Summary
 ```
@@ -242,8 +229,8 @@ Question ──< Choice        (one question has 4 choices)
 User ──< QuizAttempt       (one user has many attempts)
 Quiz ──< QuizAttempt       (one quiz has many attempts)
 QuizAttempt ──< UserAnswer (one attempt has many answers)
-Question ──< UserAnswer    (one question has many user answers across attempts)
-Choice ──< UserAnswer      (one choice can be selected by many users)
+Question ──< UserAnswer    (same question answered by many users)
+Choice ──< UserAnswer      (one choice can be picked by many users)
 User ──1 UserStats         (one user has exactly one stats record)
 ```
 
@@ -251,43 +238,45 @@ User ──1 UserStats         (one user has exactly one stats record)
 
 ## API Endpoints
 
+All endpoints are available at both `/api/v1/` (versioned) and `/api/` (legacy, backwards compatible).
+
 ### Authentication
-| Method | URL | Auth Required | Description |
-|--------|-----|--------------|-------------|
-| POST | `/api/auth/register/` | No | Create new account |
-| POST | `/api/auth/login/` | No | Login, get JWT tokens |
-| POST | `/api/auth/token/refresh/` | No | Get new access token using refresh token |
-| GET/PATCH | `/api/auth/profile/` | Yes | View or update your profile |
+| Method | URL | Auth | Description |
+|--------|-----|------|-------------|
+| POST | `/api/v1/auth/register/` | No | Create new account |
+| POST | `/api/v1/auth/login/` | No | Login, receive JWT tokens |
+| POST | `/api/v1/auth/token/refresh/` | No | Get new access token |
+| GET/PATCH | `/api/v1/auth/profile/` | Yes | View or update profile |
 
 ### Quizzes
-| Method | URL | Auth Required | Description |
-|--------|-----|--------------|-------------|
-| GET | `/api/quizzes/` | Yes | List all public ready quizzes |
-| POST | `/api/quizzes/create/` | Yes | Create quiz + trigger AI generation |
-| GET | `/api/quizzes/mine/` | Yes | List your own quizzes |
-| GET | `/api/quizzes/<id>/` | Yes | Get quiz with all questions |
-| DELETE | `/api/quizzes/<id>/` | Yes | Delete your own quiz |
+| Method | URL | Auth | Description |
+|--------|-----|------|-------------|
+| GET | `/api/v1/quizzes/` | Yes | List public quizzes (cached 2 min) |
+| POST | `/api/v1/quizzes/create/` | Yes | Create quiz + AI generation |
+| GET | `/api/v1/quizzes/mine/` | Yes | Your own quizzes |
+| GET | `/api/v1/quizzes/<id>/` | Yes | Full quiz with questions |
+| DELETE | `/api/v1/quizzes/<id>/` | Yes | Delete your own quiz |
 
 ### Attempts
-| Method | URL | Auth Required | Description |
-|--------|-----|--------------|-------------|
-| POST | `/api/quizzes/<id>/start/` | Yes | Start a new attempt |
-| POST | `/api/quizzes/attempts/<id>/submit/` | Yes | Submit answers and get score |
-| POST | `/api/quizzes/attempts/<id>/abandon/` | Yes | Abandon an in-progress attempt |
+| Method | URL | Auth | Description |
+|--------|-----|------|-------------|
+| POST | `/api/v1/quizzes/<id>/start/` | Yes | Start an attempt |
+| POST | `/api/v1/quizzes/attempts/<id>/submit/` | Yes | Submit answers, get score |
+| POST | `/api/v1/quizzes/attempts/<id>/abandon/` | Yes | Abandon in-progress attempt |
 
 ### Analytics
-| Method | URL | Auth Required | Description |
-|--------|-----|--------------|-------------|
-| GET | `/api/quizzes/history/` | Yes | Your completed attempts |
-| GET | `/api/quizzes/stats/` | Yes | Your overall stats and streak |
-| GET | `/api/quizzes/leaderboard/` | Yes | Top 20 users by average score |
+| Method | URL | Auth | Description |
+|--------|-----|------|-------------|
+| GET | `/api/v1/quizzes/history/` | Yes | Your completed attempts |
+| GET | `/api/v1/quizzes/stats/` | Yes | Your stats and streak |
+| GET | `/api/v1/quizzes/leaderboard/` | Yes | Top 20 users (cached 5 min) |
 
-### Docs
+### Documentation & Admin
 | URL | Description |
 |-----|-------------|
 | `/api/docs/` | Swagger UI — interactive API explorer |
-| `/api/redoc/` | ReDoc — alternative documentation style |
-| `/admin/` | Django admin panel (staff only) |
+| `/api/redoc/` | ReDoc — alternative documentation view |
+| `/admin/` | Django admin panel (Jazzmin theme) |
 
 ---
 
@@ -295,191 +284,158 @@ User ──1 UserStats         (one user has exactly one stats record)
 
 ### Quiz Creation and AI Generation
 
-When you POST to `/api/quizzes/create/`:
+When POST `/api/v1/quizzes/create/` is called:
 
-1. The request data is validated (topic must be at least 2 characters, question_count must be 1–20)
-2. A `Quiz` record is saved to the database with `status='draft'`
-3. We call `generate_quiz_questions()` in `ai_service.py`
-4. This sends a carefully crafted prompt to Groq's Llama 3.3 model
-5. The AI returns a JSON array of questions and choices
-6. We validate the AI response (correct number of questions, exactly 4 choices each, exactly one correct answer)
-7. We save each `Question` and its 4 `Choice` records to the database
-8. We update the quiz `status` to `'ready'`
-9. The full quiz with questions is returned to the user
+1. Serializer validates input (topic ≥ 2 chars, question_count 1–20)
+2. Quiz saved to DB with `status='draft'`
+3. `generate_quiz_questions()` called in `ai_service.py`
+4. Prompt sent to Groq's Llama 3.3 70B model
+5. Response parsed from JSON, markdown stripped if present
+6. Each question validated: 4 choices, exactly 1 correct
+7. All questions and choices saved inside `transaction.atomic()`
+8. Quiz status updated to `'ready'`
+9. Cache for quiz list invalidated so new quiz appears immediately
+10. Full quiz returned in response
 
-**What if the AI fails?**
-The quiz status is set to `'failed'` and a 503 error is returned. The draft quiz remains in the database so we can debug it.
+**If AI fails:** quiz marked `'failed'`, 503 returned, no partial data saved.
 
-**Why wrap the database saves in `transaction.atomic()`?**
-If saving question 3 fails after saving questions 1 and 2, we don't want partial data in the database. `transaction.atomic()` means either ALL saves succeed or NONE do — it's all or nothing.
-
-### Taking a Quiz (Attempt Flow)
+### Taking a Quiz
 
 ```
-User starts attempt → User submits answers → Score is calculated → Stats are updated
+Start attempt → Submit all answers → Score calculated → Stats updated
 ```
 
-**Start:** POST `/api/quizzes/<id>/start/`
-- Creates a `QuizAttempt` with `status='in_progress'`
-- Returns the `attempt_id` which the user needs for submission
-- **Edge case:** If you already have an in-progress attempt for this quiz, it returns the existing attempt_id instead of creating a duplicate
-
-**Submit:** POST `/api/quizzes/attempts/<id>/submit/`
-- Validates every question_id belongs to this quiz
-- Validates every choice_id belongs to the correct question
-- Saves each `UserAnswer` with `is_correct` flag
-- Calculates `score = (correct_answers / total_questions) × 100`
-- Sets `status='completed'`, records `completed_at` and `time_taken_seconds`
-- Calls `stats.update_after_attempt()` to update the user's streak and averages
-- Returns full results with explanations
-
-**Time limit check:**
-If the quiz has a `time_limit_minutes` set, we check if the time elapsed since `started_at` exceeds the limit. If it does, the attempt is marked `'timed_out'` before scoring.
-
-### Streak Tracking
-
-A "streak" counts consecutive quizzes where the user scored ≥60% (passing grade).
-
-In `UserStats.update_after_attempt()`:
-```python
-if attempt.passed:          # passed = score >= 60%
-    current_streak += 1
-    if current_streak > best_streak:
-        best_streak = current_streak
-else:
-    current_streak = 0      # streak is broken
-```
-
-This runs every time a quiz is completed. The `best_streak` field never decreases — it permanently records the highest streak ever achieved.
-
-### Leaderboard
-
-The leaderboard returns the top 20 users ranked by `average_score`, with `best_streak` as a tiebreaker.
-
-**Why minimum 3 quizzes?**
-A user who took one quiz and got 100% shouldn't rank above someone who consistently scores 95% over 50 quizzes. The 3-quiz minimum ensures the leaderboard reflects sustained performance, not luck.
+- **Start:** Creates `QuizAttempt` with `status='in_progress'`. Blocks duplicate attempts.
+- **Submit:** Validates all question/choice IDs, saves `UserAnswer` records, calculates score, updates `UserStats`.
+- **Time limit:** If exceeded at submit time, attempt is marked `timed_out` and not scored.
 
 ### Scoring
-
 ```
 score = (correct_answers / total_questions) × 100
-passed = score >= 60
+passed = score >= 60%
 ```
 
-A quiz is considered "passed" at 60% — this is used to determine whether the streak continues or resets.
+### Streak Tracking
+```python
+if attempt.passed:
+    current_streak += 1
+    best_streak = max(best_streak, current_streak)
+else:
+    current_streak = 0
+```
+`best_streak` never decreases — it permanently records the highest streak ever.
+
+### Leaderboard
+Top 20 users by `average_score`, with `best_streak` as tiebreaker. Minimum 3 quizzes required to appear — prevents a single lucky attempt from topping the board.
 
 ---
 
 ## Authentication Deep Dive
 
-### How JWT Works
+**Login** returns two tokens:
+- **Access token** — valid 1 hour, sent with every request as `Authorization: Bearer <token>`
+- **Refresh token** — valid 7 days, used to get a new access token
 
-**Registration:** You send email, username, password → account is created → no token yet
+**Why two tokens?** Short-lived access tokens limit damage if stolen. The refresh token renews silently without re-login.
 
-**Login:** You send email + password → server verifies → server generates two tokens:
-- **Access token** (valid for 1 hour): sent with every API request in the `Authorization` header
-- **Refresh token** (valid for 7 days): used only to get a new access token when the old one expires
+**Verification:** Tokens are cryptographically signed with `SECRET_KEY`. No database lookup needed — just signature verification. This is what makes JWT fast.
 
-**Making authenticated requests:**
-Every protected endpoint requires this header:
-```
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-```
-
-**Why two tokens?**
-Access tokens expire quickly (1 hour) for security. If someone steals your access token, it's useless after an hour. The refresh token lives longer (7 days) and is used less frequently — only to renew the access token. This means you don't have to log in every hour.
-
-**How the server verifies the token:**
-JWT tokens are cryptographically signed using the `SECRET_KEY` from settings. The server can verify the signature without a database lookup — this is what makes JWT fast.
-
-### Role-Based Permissions
-
-We use three permission levels:
-- **AllowAny** — anyone can access (register, login, docs)
-- **IsAuthenticated** — must be logged in (most endpoints)
-- **Owner check** — must own the resource (deleting a quiz checks `quiz.created_by == request.user`)
+**Permission levels:**
+- `AllowAny` — register, login, docs
+- `IsAuthenticated` — all other endpoints
+- Owner check — delete quiz, access private quiz
 
 ---
 
 ## AI Integration
 
-### The Prompt Engineering
+### How It Works
 
-The prompt we send to Groq is carefully structured:
-1. Tells the AI exactly how many questions to generate
-2. Specifies the exact JSON format we expect back
-3. Sets difficulty-appropriate instructions (easy = definitions, hard = analysis)
-4. Enforces rules: exactly 4 choices, exactly 1 correct answer
+`quiz/ai_service.py` is the only file that knows about the AI provider. It:
+1. Builds a structured prompt with topic, difficulty, count, and exact JSON format
+2. Calls Groq's API with the Llama 3.3 70B model
+3. Strips markdown formatting from response with regex
+4. Parses JSON
+5. Validates structure (4 choices, 1 correct per question)
+6. Returns clean list of question dicts
 
-### Parsing the AI Response
+### Why Groq over Gemini
 
-AI models sometimes wrap their response in markdown code blocks (` ```json `). Our code strips those out with regex before parsing the JSON:
-```python
-raw = re.sub(r'^```(?:json)?\s*', '', raw)
-raw = re.sub(r'\s*```$', '', raw)
-```
+We started with Google Gemini. The API returned `limit: 0` — zero quota — despite the free tier being advertised. This is a known issue in certain regions or account types. Google AI Studio's chat interface worked fine because it's on a separate quota system from the programmatic API.
 
-### Validation After Parsing
+Groq was chosen as the replacement:
+- Truly free tier, instant access, no quota issues
+- Llama 3.3 70B produces high-quality, well-structured quiz questions
+- Groq's custom hardware makes inference very fast
+- Only ~5 lines of code changed to switch providers — the architecture is provider-agnostic
 
-Even after the AI responds, we validate:
-- Is the response a list?
-- Does each question have `text` and `choices`?
-- Does each question have exactly 4 choices?
-- Does each question have exactly 1 correct answer?
+### AI Rate Limiting
 
-This prevents bad AI output from corrupting our database.
-
-### Why We Switched from Gemini to Groq
-
-We initially integrated with Google Gemini (free tier). However, the API returned `limit: 0` for our account — meaning zero quota was assigned. This can happen due to regional restrictions or account type. Google AI Studio (the chat interface) worked fine because it uses a different quota system than the API.
-
-Groq was chosen as the replacement because:
-- Genuinely free tier with no quota issues
-- Provides access to Meta's Llama 3.3 70B model — high quality responses
-- Very fast inference (Groq builds custom hardware for AI)
-- Simple REST API similar to OpenAI's format
-
-The architecture was designed so the AI provider can be swapped by only changing `ai_service.py` — the rest of the codebase doesn't know or care which AI is being used.
+A custom `AIGenerationThrottle` limits quiz creation to 20 per hour per user. This protects against API abuse and excessive Groq API usage.
 
 ---
 
 ## Design Decisions and Trade-offs
 
-### Decision 1: Synchronous AI Generation
-**What we did:** When a user requests a quiz, we call the AI and wait for it to respond before returning the HTTP response.
+### 1. Synchronous AI Generation
+**Decision:** Wait for AI during the HTTP request (user waits 2–5 seconds).
+**Trade-off:** Latency on quiz creation vs. simpler code.
+**Why:** Celery + Redis for background tasks adds significant complexity. The synchronous approach is reliable, debuggable, and sufficient for this scale.
 
-**Trade-off:** The user waits 2–5 seconds while the AI generates questions. The alternative (async/background task with Celery) is more complex to set up.
+### 2. Storing `is_correct` in UserAnswer
+**Decision:** Copy `is_correct` from Choice into UserAnswer at submission time.
+**Trade-off:** Minor data redundancy.
+**Why:** Avoids a JOIN to the Choice table every time results are loaded. Read performance wins over minimal storage cost.
 
-**Why we chose sync:** The assignment asked for incremental building. Background tasks are a bonus feature. The current approach works reliably and is easier to explain and debug.
+### 3. Pre-aggregated UserStats
+**Decision:** Maintain a running stats row updated after each attempt.
+**Trade-off:** Extra write per submission.
+**Why:** Stats are read far more often than written (profile page, leaderboard). Pre-aggregation makes reads O(1) regardless of history size.
 
-### Decision 2: Storing `is_correct` in UserAnswer
-**What we did:** We copy the `is_correct` value from the `Choice` into the `UserAnswer` when the answer is submitted.
+### 4. Email as Login Field
+**Decision:** `USERNAME_FIELD = 'email'` on the custom User model.
+**Why:** Email is universally unique and users remember it more reliably than a chosen username.
 
-**Trade-off:** Slight data redundancy — the information exists in both places.
+### 5. SQLite Locally, PostgreSQL in Production
+**Decision:** Check for `DATABASE_URL` env var; use PostgreSQL if present, SQLite otherwise.
+**Why:** Zero-setup local development while using a production-grade database in deployment. `dj_database_url` handles the connection string automatically.
 
-**Why:** Performance. To show quiz results, we need to know which answers were correct. Storing it directly avoids a JOIN with the `Choice` table every time results are loaded.
+### 6. API Versioning via URL Prefix
+**Decision:** All endpoints available at `/api/v1/` with legacy `/api/` kept for backwards compatibility.
+**Why:** URL versioning is the most explicit and visible approach. If the API changes in a breaking way, a `/api/v2/` can be introduced without breaking existing clients.
 
-### Decision 3: Pre-aggregated UserStats
-**What we did:** We maintain a running `UserStats` record that updates after every attempt.
+### 7. Caching Strategy
+**Decision:** Cache quiz list (2 min) and leaderboard (5 min). Invalidate quiz list when a new quiz is created.
+**Why:** These are the most frequently read endpoints. Caching reduces database load significantly under concurrent usage. TTLs are short enough that stale data is acceptable.
 
-**Trade-off:** Extra write on every submission.
+---
 
-**Why:** Reading stats (for profile, leaderboard) is much more frequent than writing. Pre-aggregation makes reads fast at the cost of slightly more work on writes.
+## Challenges Faced and Solutions
 
-### Decision 4: Email as username
-**What we did:** Users log in with email instead of username.
+### Challenge 1: Gemini API Quota Issue
+**Problem:** Google Gemini returned `limit: 0` for every model — zero free tier quota despite the advertised free plan. The chat UI worked fine but the programmatic API did not.
+**Solution:** Switched to Groq which provides a genuinely free API. The codebase was designed with a clean `ai_service.py` abstraction, so swapping providers took only a few minutes.
 
-**Why:** Email is unique and people are more likely to remember it. More common in modern apps.
+### Challenge 2: Multiple Django Servers Running Simultaneously
+**Problem:** Running `python manage.py runserver` multiple times (as background processes) caused 10 server instances to accumulate. Each had its own in-memory throttle counter, causing confusing 429 errors.
+**Solution:** Killed all Python processes and restarted cleanly. Going forward, always check for running instances before starting a new server.
 
-### Decision 5: Public/Private Quizzes
-**What we did:** Each quiz has an `is_public` flag.
+### Challenge 3: Git Repository Root Mismatch
+**Problem:** Git was initialized at the home directory (`C:/Users/tnvar`) instead of the project folder. This caused Railway to see `OneDrive/Desktop/quiz_application/` as a subfolder instead of the project root — it couldn't detect the Python project.
+**Solution:** Removed the misplaced `.git` folder and re-initialized git inside the actual project directory. Railway then detected the Python project correctly.
 
-**Why:** Allows users to create private quizzes (e.g. practice material) that others can't see or take. Private quizzes still appear in the creator's "my quizzes" list.
+### Challenge 4: AI Response Formatting
+**Problem:** The AI sometimes wraps its JSON response in markdown code blocks (` ```json `) even when instructed not to.
+**Solution:** Applied regex stripping before JSON parsing:
+```python
+raw = re.sub(r'^```(?:json)?\s*', '', raw)
+raw = re.sub(r'\s*```$', '', raw)
+```
+Added multi-layer validation after parsing to catch any remaining structural issues.
 
-### Decision 6: SQLite locally, PostgreSQL in production
-**What we did:** The code checks for a `DATABASE_URL` environment variable. If present (Railway), use PostgreSQL. If not (local), use SQLite.
-
-**Why:** SQLite requires zero setup — great for development. PostgreSQL is required for production reliability. `dj_database_url` handles the connection string parsing automatically.
+### Challenge 5: Cache Bleeding Between Tests
+**Problem:** Django's in-memory cache (`LocMemCache`) persisted between test cases. One test caching an empty quiz list caused the next test to read a stale empty cache, causing false failures.
+**Solution:** Added `cache.clear()` in each test class's `setUp()` method to ensure a clean cache state before every test.
 
 ---
 
@@ -487,62 +443,97 @@ The architecture was designed so the AI provider can be swapped by only changing
 
 | Scenario | How We Handle It |
 |----------|-----------------|
-| User tries to start a second attempt on the same quiz | Returns existing attempt_id with a clear error message |
-| User submits an answer for a question not in the quiz | Returns 400 with specific error |
-| User submits a choice that doesn't belong to the question | Returns 400 with specific error |
-| User submits duplicate answers for the same question | Serializer validation rejects it before database write |
-| Quiz time limit exceeded during submission | Attempt marked as `timed_out`, answers not scored |
+| Duplicate in-progress attempt | Returns existing `attempt_id` with clear message |
+| Answer for wrong quiz's question | Validated against quiz's question set — 400 returned |
+| Choice not belonging to question | Cross-validated before saving — 400 returned |
+| Duplicate answers for same question | Serializer validates uniqueness — 400 returned |
+| Quiz time limit exceeded | Attempt marked `timed_out`, not scored |
 | AI returns malformed JSON | Exception caught, quiz marked `failed`, 503 returned |
-| AI returns wrong number of choices | Validation raises `ValueError` before saving |
-| User tries to delete someone else's quiz | Returns 403 Forbidden |
-| User tries to take a private quiz they don't own | Returns 403 Forbidden |
-| User tries to submit to a completed/abandoned attempt | Returns 400 with current status |
-| AI quota exhausted | Caught as exception, returns 503 with details |
+| AI returns wrong choice count | Validation before DB save raises `ValueError` |
+| Deleting another user's quiz | Ownership check — 403 returned |
+| Taking a private quiz you don't own | Ownership check — 403 returned |
+| Submitting to a completed attempt | Status check — 400 with current status |
+| AI quota exhausted | Caught, 503 returned with detail |
+| Empty answers list | Serializer validation — 400 returned |
 
 ---
 
 ## Security
 
-### Password Hashing
-Django never stores plain text passwords. It uses PBKDF2-SHA256 hashing with a salt. Even if the database is compromised, passwords cannot be recovered.
-
-### JWT Secret Key
-Tokens are signed with `SECRET_KEY` from environment variables — never hardcoded in the source code.
-
-### Input Validation
-Every piece of user input goes through DRF serializers before touching the database. Invalid data is rejected with clear error messages.
-
-### .env File
-Sensitive data (API keys, secret key) lives in `.env` which is in `.gitignore` — it's never committed to GitHub.
-
-### SQL Injection Prevention
-Django's ORM (Object-Relational Mapper) uses parameterized queries by default. We never write raw SQL, so SQL injection is not possible.
-
-### CORS
-`django-cors-headers` is configured to allow all origins in development. In production, this should be restricted to the actual frontend domain.
+| Concern | How Addressed |
+|---------|--------------|
+| Passwords | PBKDF2-SHA256 hashing with salt — Django built-in |
+| Secret keys | Stored in `.env`, loaded via `python-dotenv`, never committed |
+| SQL injection | Django ORM uses parameterized queries by default |
+| Input validation | All input goes through DRF serializers before DB write |
+| Token signing | JWT signed with `SECRET_KEY` — tamper-proof |
+| Resource ownership | Manual checks in views — 403 on unauthorized access |
+| CORS | `django-cors-headers` — can be restricted to specific domains |
 
 ---
 
-## Performance
+## Performance and Caching
+
+### Caching
+
+| Cache Key | TTL | What's Cached |
+|-----------|-----|---------------|
+| `quiz_list_{topic}_{difficulty}` | 2 minutes | Public quiz list per filter combination |
+| `leaderboard_top20` | 5 minutes | Top 20 leaderboard results |
+
+Cache backend:
+- **Local development:** `LocMemCache` (in-memory, no setup required)
+- **Production:** Redis via `REDIS_URL` environment variable (when configured)
+
+Cache invalidation: quiz list cache is cleared when a new quiz is successfully created, so it appears immediately without waiting for the TTL to expire.
 
 ### Database Indexes
-We added indexes on frequently queried fields:
-- `Quiz.topic` — for topic-based filtering
-- `Quiz.difficulty` — for difficulty filtering
-- `Quiz.created_by` — for "my quizzes" queries
-- `QuizAttempt(user, status)` — for history and in-progress checks
-- `QuizAttempt(quiz, status)` — for quiz analytics
+Indexes on all frequently filtered fields:
+- `Quiz.topic`, `Quiz.difficulty`, `Quiz.created_by`
+- `QuizAttempt(user, status)`, `QuizAttempt(quiz, status)`
 
-Indexes make lookups much faster — instead of scanning every row, PostgreSQL jumps directly to matching rows.
-
-### select_related
-In views where we need related data, we use `select_related()` to fetch it in a single SQL query instead of making separate queries for each object. For example, `QuizAttempt.objects.select_related('quiz')` fetches both the attempt and quiz data in one query.
+### Query Optimization
+`select_related()` used wherever related objects are needed — fetches data in a single SQL JOIN instead of N+1 queries.
 
 ### Pagination
-All list endpoints return paginated results (10 per page by default). This prevents returning thousands of records in one response.
+All list endpoints return 10 results per page. Prevents large payloads as data grows.
 
 ### Pre-aggregated Stats
-As explained above, `UserStats` avoids recalculating averages and streaks from scratch on every request.
+`UserStats` is updated on write, read as a single row lookup — O(1) regardless of attempt history size.
+
+---
+
+## Testing Approach
+
+**33 tests** covering the full application. Run with:
+```bash
+python manage.py test --verbosity=2
+```
+
+### Test Coverage
+
+**users/tests.py — 13 tests**
+
+| Test Class | Tests |
+|------------|-------|
+| `UserRegistrationTests` | Valid registration, duplicate email, password mismatch, weak password, missing fields |
+| `UserAuthenticationTests` | Successful login, wrong password, nonexistent user |
+| `UserProfileTests` | Get profile, unauthenticated access blocked, profile update |
+
+**quiz/tests.py — 20 tests**
+
+| Test Class | Tests |
+|------------|-------|
+| `QuizModelTests` | `__str__`, attempt_count property, percentage calculation, passed/failed logic |
+| `UserStatsTests` | Streak increase on pass, streak reset on fail, best_streak never decreases, average score calculation |
+| `QuizAPITests` | Public quiz listing, draft quiz hidden, difficulty filter, auth required |
+| `AttemptAPITests` | Start attempt, duplicate blocked, correct answer scoring, wrong answer scoring, cannot resubmit, invalid question ID, abandon, history, stats update |
+
+### Testing Philosophy
+- **No mocking the database** — tests run against a real SQLite database (created fresh per test run)
+- **No mocking the AI** — quiz creation tests build quizzes directly via the model, bypassing the AI call (tests should be fast and deterministic)
+- **Edge cases first** — duplicate attempts, wrong IDs, resubmission, and auth failures are all explicitly tested
+- **Cache isolation** — `cache.clear()` called in `setUp()` to prevent state bleeding between tests
 
 ---
 
@@ -555,38 +546,42 @@ As explained above, `UserStats` avoids recalculating averages and streaks from s
 ### Steps
 
 ```bash
-# Clone the repo
+# 1. Clone the repo
 git clone https://github.com/varunnavie/quiz-app.git
 cd quiz-app
 
-# Create virtual environment
+# 2. Create virtual environment
 python -m venv venv
-source venv/Scripts/activate  # Windows Git Bash
-# or
-venv\Scripts\activate  # Windows PowerShell
+source venv/Scripts/activate   # Windows Git Bash
+# venv\Scripts\activate        # Windows PowerShell
 
-# Install dependencies
+# 3. Install dependencies
 pip install -r requirements.txt
 
-# Create .env file
-# Add these lines:
-# SECRET_KEY=any-random-string-here
+# 4. Create .env file in the project root with these contents:
+# SECRET_KEY=any-long-random-string
 # DEBUG=True
-# GROQ_API_KEY=your_groq_key_from_console.groq.com
+# GROQ_API_KEY=your_key_from_console.groq.com
 
-# Run migrations
+# 5. Run database migrations
 python manage.py migrate
 
-# Create admin user
+# 6. Create an admin user (optional)
 python manage.py createsuperuser
 
-# Start server
+# 7. Run tests to verify everything works
+python manage.py test
+
+# 8. Start the development server
 python manage.py runserver
 ```
 
-### Accessing the API
-- Swagger UI: http://127.0.0.1:8000/api/docs/
-- Admin Panel: http://127.0.0.1:8000/admin/
+### Accessing Locally
+| URL | What |
+|-----|------|
+| `http://127.0.0.1:8000/api/docs/` | Swagger UI |
+| `http://127.0.0.1:8000/admin/` | Admin panel |
+| `http://127.0.0.1:8000/api/v1/auth/register/` | Register endpoint |
 
 ---
 
@@ -594,46 +589,46 @@ python manage.py runserver
 
 ### Platform: Railway (railway.app)
 
-Railway was chosen because:
-- Free tier available
-- Auto-detects Python projects
-- Provides managed PostgreSQL
-- Deploys directly from GitHub — push code, it deploys automatically
+**Why Railway:**
+- Free tier with managed PostgreSQL
+- Deploys directly from GitHub on every push
+- Environment variables managed securely in dashboard
 
-### Environment Variables on Railway
+### Required Environment Variables
 | Variable | Description |
 |----------|-------------|
 | `SECRET_KEY` | Django secret key for cryptographic signing |
 | `DEBUG` | Set to `False` in production |
-| `GROQ_API_KEY` | Groq API key for AI question generation |
-| `DATABASE_URL` | Auto-set by Railway when PostgreSQL is added |
+| `GROQ_API_KEY` | Groq API key for AI generation |
+| `DATABASE_URL` | Auto-injected by Railway PostgreSQL plugin |
 
-### How Deployment Works
-1. Code is pushed to GitHub
-2. Railway detects the push and starts a new build
-3. `nixpacks.toml` tells Railway to install Python dependencies
-4. `Procfile` tells Railway to run: `python manage.py migrate && gunicorn quiz_project.wsgi --bind 0.0.0.0:$PORT`
-5. `manage.py migrate` runs database migrations on the production PostgreSQL
-6. `gunicorn` starts the production-grade web server
-7. Railway assigns the domain and routes traffic
+### Deployment Flow
+1. Push to GitHub → Railway auto-detects change
+2. `nixpacks.toml` → installs Python 3.11 and pip dependencies
+3. Custom start command → `python manage.py migrate && gunicorn quiz_project.wsgi --bind 0.0.0.0:$PORT`
+4. Migrations run on PostgreSQL
+5. Gunicorn serves the application
 
-### Why Gunicorn instead of Django's dev server?
-Django's built-in server (`manage.py runserver`) is for development only — it handles one request at a time. Gunicorn is a production WSGI server that handles multiple simultaneous requests using worker processes.
+**Why Gunicorn:** Django's dev server handles one request at a time. Gunicorn spawns multiple workers for concurrent requests.
 
-### Why Whitenoise?
-In production, Django doesn't serve static files (CSS, JS for admin). Whitenoise is a middleware that handles this efficiently without needing a separate nginx server.
+**Why Whitenoise:** Serves Django admin static files (CSS/JS) from within the app — no separate nginx needed.
 
 ---
 
-## Bonus Features Implemented
+## Bonus Features
 
-- **Streak tracking** — consecutive quiz passes tracked in real-time
-- **Leaderboard** — top 20 users by average score (minimum 3 quizzes)
-- **Jazzmin admin theme** — polished admin interface
-- **Swagger UI** — interactive API documentation
-- **Time-limited quizzes** — optional per-quiz time limits
-- **Question explanations** — AI generates explanations for correct answers
-- **Public/private quizzes** — users control quiz visibility
-- **AI rate limiting** — separate throttle for AI generation endpoint
-- **Database indexes** — on all frequently queried fields
-- **Atomic transactions** — prevents partial data on AI generation failure
+| Feature | Description |
+|---------|-------------|
+| Streak tracking | Consecutive quiz passes tracked per user |
+| Leaderboard | Top 20 users by average score (min. 3 quizzes) |
+| Jazzmin admin | Modern admin UI with icons and sidebar |
+| Swagger + ReDoc | Auto-generated interactive API documentation |
+| Time-limited quizzes | Optional per-quiz time caps |
+| Question explanations | AI generates "why" for each correct answer |
+| Public/private quizzes | Creator controls visibility |
+| AI rate limiting | 20 quiz generations per hour per user |
+| Database indexes | All frequently filtered fields indexed |
+| Atomic transactions | No partial data on AI generation failure |
+| Caching | Quiz list (2 min) and leaderboard (5 min) cached |
+| API versioning | `/api/v1/` with backwards-compatible `/api/` |
+| 33 automated tests | Full coverage of auth, models, attempts, edge cases |
