@@ -14,6 +14,10 @@ DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
 ALLOWED_HOSTS = ['*']
 
+CSRF_TRUSTED_ORIGINS = [
+    'https://quiz-app-production-b4cd.up.railway.app',
+]
+
 INSTALLED_APPS = [
     # Jazzmin must be before django.contrib.admin
     'jazzmin',
