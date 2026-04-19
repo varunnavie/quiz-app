@@ -1,4 +1,4 @@
-# QuizMaster AI — Backend Developer Assignment
+# QuizMaster AI — Backend 
 
 A fully deployed REST API for an AI-powered quiz platform built with Django, Django REST Framework, and PostgreSQL.
 
